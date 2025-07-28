@@ -8,8 +8,8 @@ from dataclasses import dataclass
 from datetime import datetime
 
 import pandas as pd
-from rapidfuzz import process, fuzz
 from openpyxl import load_workbook
+from rapidfuzz import process, fuzz
 
 # Ignore unneeded warnings
 warnings.filterwarnings('ignore', category=UserWarning, module='openpyxl')
@@ -350,12 +350,12 @@ class PBJProcessor:
                         matches_found += 1
                         
                         if log_key not in seen_log_keys:
-                            print(f"[MATCH]    name: {row[self.config.rehab_full_name]}"
-                                  f"    EID: {matched_row[self.config.master_eid]}")
+                            print(f"[MATCH]    EID: {matched_row[self.config.master_eid]}"
+                                  f"  name: {row[self.config.rehab_full_name]}")
                             seen_log_keys.add(log_key)
                     else:
                         if log_key not in seen_log_keys:
-                            print(f"[NO MATCH] name: {row[self.config.rehab_full_name]}")
+                            print(f"[NO MATCH]               name: {row[self.config.rehab_full_name]}")
                             seen_log_keys.add(log_key)
                 else:
                     if log_key not in seen_log_keys:
@@ -645,6 +645,13 @@ def main():
         )
         
         print("\n✓ All processing completed successfully!")
+
+        if os.name == 'nt':
+            import msvcrt
+            print("Press any key to exit...")
+            msvcrt.getch()
+        else:
+            input("Press Enter to exit...")
         
     except Exception as e:
         print(f"\n✗ Processing failed: {e}")
