@@ -4,6 +4,7 @@ import os
 import re
 import warnings
 from dataclasses import dataclass
+from collections import defaultdict
 from pathlib import Path
 from typing import List, Optional
 
@@ -57,34 +58,51 @@ class ColumnConfig:
     rehab_facility: str = "Primary Facility"
 
 
+@dataclass
+class PathGroup:
+    pbj_path: Path
+    tcll_path: Path
+
 class PBJProcessor:
     """Main class for processing PBJ-related files."""
 
-    def __init__(self, config: Optional[ColumnConfig] = None):
+    def __init__(
+        self,
+        input_dir: str,
+        processed_dir: str,
+        merged_dir: str,
+        rehab_dir: str,
+        config: Optional[ColumnConfig] = None,
+    ):
+        self.input_dir: str = input_dir
+        self.processed_dir: str = processed_dir
+        self.merged_dir: str = merged_dir
+        self.rehab_dir: str = rehab_dir
         self.config = config or ColumnConfig()
+        
+        self.df_master: pd.Dataframe = self.load_master()
+        self.group_dict: defaultdict = defaultdict(dict)
+        self.load_group_dict()
+        self.rehab_dict: defaultdict = defaultdict(list)
+        self.load_rehab_dict()
 
-    def load_master(self, file_path: str, sheet_name: str = "Master") -> pd.DataFrame:
+    def load_master(self, sheet_name: str = "Master") -> pd.DataFrame:
         """Load and validate the Contract Employee ID Master List."""
         try:
-            if not Path(file_path).exists():
-                raise FileNotFoundError(f"Master file not found: {file_path}")
+            masterlist_files = glob.glob(f"{self.input_dir}/*Master List*.xlsx")
+            if not masterlist_files:
+                raise FileNotFoundError("Master list file not found")
+            file_path = masterlist_files[0] 
+            df_master = pd.read_excel(file_path, sheet_name=sheet_name, dtype={"EID": str})
 
-            df_master = pd.read_excel(
-                file_path, sheet_name=sheet_name, dtype={"EID": str}
-            )
-
-            # Remove unnamed columns
+            # Validate columns and filter for required columns only
             df_master = df_master.loc[:, ~df_master.columns.str.contains("^Unnamed")]
-
-            # Validate required columns
             required_columns = {
                 self.config.master_site_work,
                 self.config.master_full_name,
                 self.config.master_eid,
             }
             self._validate_columns(df_master, required_columns, "Master")
-
-            # Filter to required columns only
             df_master = df_master[list(required_columns)]
 
             print(f"Loaded master list with {len(df_master)} records")
@@ -94,19 +112,89 @@ class PBJProcessor:
             print(f"Error loading master file: {e}")
             raise
 
+    def load_group_dict(self) -> None:
+        """Read input directory and group PBJ files by Quarter and Facility."""
+        try:
+            pbj_files = glob.glob(f"{self.input_dir}/*Payroll Based Journal.csv")
+            if not pbj_files:
+                raise FileNotFoundError("No PBJ files found")
+            print(f"Found {len(pbj_files)} PBJ files to process")
+
+            for pbj_file in pbj_files:
+                # Extract quarter and facility from PBJ
+                pbj_filename = Path(pbj_file).name
+                match = re.match(
+                    r"(\d{4} Q\d+)\s+(.+?)\s+Payroll Based Journal\.csv", pbj_filename
+                )
+                if not match:
+                    print(f"Error: Could not parse filename format: {pbj_filename}")
+                    continue
+                quarter, facility = match.groups()
+                self.group_dict[quarter][facility] = PathGroup(
+                    pbj_path=Path(self.input_dir) / pbj_filename,
+                    tcll_path=Path(),
+                )
+
+                # Find corresponding TCLL for quarter and facility (if any)
+                tcll_pattern = (
+                    f"{self.input_dir}/*{quarter}*{facility}*Time Card by Labor Level.xlsx"
+                )
+                tcll_files = glob.glob(tcll_pattern)
+                if tcll_files:
+                    tcll_file = tcll_files[0]
+                    tcll_filename = Path(tcll_file).name
+                    self.group_dict[quarter][facility] = PathGroup(
+                        pbj_path=Path(self.input_dir) / pbj_filename,
+                        tcll_path=Path(self.input_dir) / tcll_filename,
+                    )
+                
+                print(f"Found files for {quarter} {facility}:")
+                print(f"  - PBJ:  {self.group_dict[quarter][facility].pbj_path}")
+                print(f"  - TCLL: {self.group_dict[quarter][facility].tcll_path}")
+        
+        except Exception as e:
+            print(f"Error loading PBJ files: {e}")
+            raise
+    
+    def load_rehab_dict(self) -> None:
+        """Read input directory and group rehab PBJ files by Quarter."""
+        try:
+            rehab_files = glob.glob(f"{self.input_dir}/*Rehab PBJ.xlsx")
+            if not rehab_files:
+                raise FileNotFoundError("No Rehab PBJ files found")
+            print(f"Found {len(rehab_files)} Rehab PBJ files to process")
+
+            for rehab_file in rehab_files:
+                # Extract quarter from Rehab PBJ
+                rehab_filename = Path(rehab_file).name
+                match = re.match(
+                    r"(\d{4} Q\d+)\s+(.+?)\s+Rehab PBJ\.xlsx", rehab_filename
+                )
+                if not match:
+                    print(f"Error: Could not parse filename format: {rehab_filename}")
+                    continue
+                quarter, facility = match.groups()
+                self.rehab_dict[quarter].append(rehab_file)
+            
+            for quarter in self.rehab_dict.keys():
+                print(f"Found files for {quarter}:")
+                for rehab_file in self.rehab_dict[quarter]:
+                    print(f"  - {rehab_file}")
+        
+        except Exception as e:
+            print(f"Error loading Rehab PBJ files: {e}")
+            raise
+
     def process_tcll(self, file_path: str) -> pd.DataFrame:
         """Load and process the Time Card by Labor Level sheet."""
-
         try:
             if not Path(file_path).exists():
                 raise FileNotFoundError(f"TCLL file not found: {file_path}")
 
             df_tcll = pd.read_excel(file_path)
 
-            # Remove unnamed columns
+            # Validate and clean columns
             df_tcll = df_tcll.loc[:, ~df_tcll.columns.str.contains("^Unnamed")]
-
-            # Validate required columns
             required_columns = {
                 self.config.tcll_labor_distribution,
                 self.config.tcll_employee_number,
@@ -182,10 +270,8 @@ class PBJProcessor:
 
             df_pbj = pd.read_csv(file_path, dtype={"Level 1": str, "Level 2": str})
 
-            # Remove unnamed columns
+            # Validate and clean columns
             df_pbj = df_pbj.loc[:, ~df_pbj.columns.str.contains("^Unnamed")]
-
-            # Validate required columns
             required_columns = {
                 self.config.pbj_pay_types_desc,
                 self.config.pbj_labor_distribution,
@@ -233,9 +319,7 @@ class PBJProcessor:
 
         return df
 
-    def merge_tcll_pbj(
-        self, df_tcll: pd.DataFrame, df_pbj: pd.DataFrame
-    ) -> pd.DataFrame:
+    def merge_tcll_pbj(self, df_tcll: pd.DataFrame, df_pbj: pd.DataFrame) -> pd.DataFrame:
         """Merge TCLL and PBJ DataFrames."""
         try:
             tcll_mapping = {
@@ -299,12 +383,7 @@ class PBJProcessor:
             print(f"Error merging TCLL and PBJ: {e}")
             raise
 
-    def process_rehab_pbj(
-        self,
-        file_path: str,
-        df_masterlist: pd.DataFrame,
-        name_match_threshold: int = 90,
-    ) -> List[pd.DataFrame]:
+    def process_rehab_pbj(self, file_path: str, name_match_threshold: int = 90) -> List[pd.DataFrame]:
         """Process rehab PBJ using masterlist for EID lookup."""
         try:
             if not Path(file_path).exists():
@@ -333,10 +412,7 @@ class PBJProcessor:
                 self.config.rehab_site_work
             ):
                 print(f"\nProcessing group: {group_name}")
-                processed_group = self._match_rehab_eids(
-                    group_df, df_masterlist, name_match_threshold
-                ).reset_index(drop=True)
-
+                processed_group = self._match_rehab_eids(group_df, name_match_threshold).reset_index(drop=True)
                 processed_groups.append(processed_group)
                 print(f"Completed processing for group: {group_name}")
 
@@ -347,31 +423,19 @@ class PBJProcessor:
             print(f"Error processing Rehab PBJ: {e}")
             raise
 
-    def _match_rehab_eids(
-        self, df_rehab: pd.DataFrame, df_master: pd.DataFrame, threshold: int
-    ) -> pd.DataFrame:
+    def _match_rehab_eids(self, df_rehab: pd.DataFrame, threshold: int) -> pd.DataFrame:
         """Match rehab employee names to master list EIDs."""
         # Create working copies with normalized columns
         df_rehab = df_rehab.copy()
-        df_master = df_master.copy()
+        df_master = self.df_master.copy()
 
         # Normalize names and sites
-        df_rehab.loc[:, "_norm_name"] = df_rehab[self.config.rehab_full_name].apply(
-            self._normalize_name
-        )
-        df_rehab.loc[:, "_norm_site_work"] = df_rehab[
-            self.config.rehab_site_work
-        ].apply(self._normalize_site)
-        df_rehab.loc[:, "_norm_facility"] = df_rehab[self.config.rehab_facility].apply(
-            self._normalize_site
-        )
-
-        df_master.loc[:, "_norm_name"] = df_master[self.config.master_full_name].apply(
-            self._normalize_name
-        )
-        df_master.loc[:, "_norm_site_work"] = df_master[
-            self.config.master_site_work
-        ].apply(self._normalize_site)
+        df_rehab.loc[:, "_norm_name"] = df_rehab[self.config.rehab_full_name].apply(self._normalize_name)
+        df_rehab.loc[:, "_norm_site_work"] = df_rehab[self.config.rehab_site_work].apply(self._normalize_site)
+        df_rehab.loc[:, "_norm_facility"] = df_rehab[self.config.rehab_facility].apply(self._normalize_site)
+        
+        df_master.loc[:, "_norm_name"] = df_master[self.config.master_full_name].apply(self._normalize_name)
+        df_master.loc[:, "_norm_site_work"] = df_master[self.config.master_site_work].apply(self._normalize_site)
 
         # Track processed entries to avoid duplicate logging
         seen_log_keys = set()
@@ -455,171 +519,92 @@ class PBJProcessor:
         print(f"Found {matches_found} EID matches out of {len(df_rehab)} records")
         return df_rehab
 
-    def process_pbj_files(
-        self,
-        input_dir: str = "input",
-        processed_dir: str = "output/processed",
-        merged_dir: str = "output/merged",
-    ) -> None:
+    def process_pbj_files(self) -> None:
         """Process all PBJ and TCLL files in the input directory."""
         try:
             # Create output directories
-            Path(processed_dir).mkdir(parents=True, exist_ok=True)
-            Path(merged_dir).mkdir(parents=True, exist_ok=True)
+            Path(self.processed_dir).mkdir(parents=True, exist_ok=True)
+            Path(self.merged_dir).mkdir(parents=True, exist_ok=True)
 
-            # Find PBJ files
-            pbj_files = glob.glob(f"{input_dir}/*Payroll Based Journal.csv")
-
-            if not pbj_files:
-                print("Error: No PBJ files found")
-                return
-
-            print(f"Found {len(pbj_files)} PBJ files to process")
-
-            successful = 0
-            for pbj_file in pbj_files:
-                try:
-                    success = self._process_single_pbj_file(
-                        pbj_file, input_dir, processed_dir, merged_dir
-                    )
-                    if success:
-                        successful += 1
-                except Exception as e:
-                    print(f"Error processing {Path(pbj_file).name}: {e}")
-                    continue
-
-            print(
-                f"\nSuccessfully processed {successful}/{len(pbj_files)} PBJ files\n"
-            )
+            # Process PBJ by groups
+            for quarter in self.group_dict:
+                for facility in self.group_dict[quarter]:
+                    paths = self.group_dict[quarter][facility]
+                    try:
+                        self._process_single_pbj_file(paths, quarter, facility)
+                    except Exception as e:
+                        print(f"Error processing {Path(paths.pbj_path).name}: {e}")
+                        continue
 
         except Exception as e:
             print(f"Error in process_pbj_files: {e}")
             raise
 
-    def _process_single_pbj_file(
-        self, pbj_file: str, input_dir: str, processed_dir: str, merged_dir: str
-    ) -> bool:
+    def _process_single_pbj_file(self, paths: PathGroup, quarter: str, facility: str):
         """Process a single PBJ file and its corresponding TCLL file."""
-        pbj_filename = Path(pbj_file).name
+        print(f"\nProcessing Standard PBJ for {quarter} {facility}...")
 
-        # Parse filename to extract quarter and facility
-        match = re.match(
-            r"(\d{4} Q\d+)\s+(.+?)\s+Payroll Based Journal\.csv", pbj_filename
-        )
-        if not match:
-            print(f"Error: Could not parse filename format: {pbj_filename}")
-            return False
-
-        quarter, facility_name = match.groups()
-        print(f"\nProcessing {quarter} {facility_name}...")
-
-        # Find corresponding TCLL file
-        tcll_pattern = (
-            f"{input_dir}/*{quarter}*{facility_name}*Time Card by Labor Level.xlsx"
-        )
-        tcll_files = glob.glob(tcll_pattern)
-
-        if not tcll_files:
-            print(f"Error: No TCLL file found for {quarter} {facility_name}")
-            return False
-
-        tcll_file = tcll_files[0]
-        tcll_filename = Path(tcll_file).name
-
-        # Process files
+        # Process and export PBJ File
+        pbj_file = paths.pbj_path
+        pbj_filename = Path(paths.pbj_path).name
         processed_pbj = self.process_pbj(pbj_file)
-        processed_tcll = self.process_tcll(tcll_file)
-        merged_data = self.merge_tcll_pbj(processed_tcll, processed_pbj)
-
-        # Export files
-        processed_pbj_path = Path(processed_dir) / pbj_filename.replace(".csv", ".xlsx")
-        processed_tcll_path = Path(processed_dir) / tcll_filename
-        merged_path = Path(merged_dir) / f"{quarter} {facility_name} PBJ.xlsx"
-
+        
+        processed_pbj_path = Path(self.processed_dir) / pbj_filename.replace(".csv", ".xlsx")
         processed_pbj.to_excel(processed_pbj_path, index=False)
-        processed_tcll.to_excel(processed_tcll_path, index=False)
-        merged_data.to_excel(merged_path, index=False)
+        
+        # Process and merge TCLL File if found
+        if paths.tcll_path:
+            tcll_file = paths.tcll_path
+            tcll_filename = Path(paths.tcll_path).name
+            
+            processed_tcll = self.process_tcll(tcll_file)
+            processed_tcll_path = Path(self.processed_dir) / tcll_filename
+            processed_tcll.to_excel(processed_tcll_path, index=False)
 
-        print(f"{quarter} {facility_name} processed successfully")
-        print(f"  - Processed PBJ: {processed_pbj_path}")
+            merged_data = self.merge_tcll_pbj(processed_tcll, processed_pbj)
+            merged_path = Path(self.merged_dir) / f"{quarter} {facility} PBJ.xlsx"
+            merged_data.to_excel(merged_path, index=False)
+
+        print(f"{quarter} {facility} processed successfully")
+        print(f"  - Processed PBJ:  {processed_pbj_path}")
         print(f"  - Processed TCLL: {processed_tcll_path}")
-        print(f"  - Merged output: {merged_path}")
+        print(f"  - Merged output:  {merged_path}")
+        return
 
-        return True
-
-    def process_rehab_pbj_files(
-        self, input_dir: str = "input", output_dir: str = "output"
-    ) -> None:
+    def process_rehab_pbj_files(self) -> None:
         """Process all Rehab PBJ files."""
         try:
-            Path(output_dir).mkdir(parents=True, exist_ok=True)
+            # Create output directory
+            Path(self.rehab_dir).mkdir(parents=True, exist_ok=True)
 
-            # Load master list
-            masterlist_files = glob.glob(f"{input_dir}/*Master List*.xlsx")
-            if not masterlist_files:
-                raise FileNotFoundError("Master list file not found")
-
-            df_master = self.load_master(masterlist_files[0])
-            master_output = Path(output_dir) / "Master List.xlsx"
-            df_master.to_excel(master_output, index=False)
-
-            # Find Rehab PBJ files
-            rehab_files = glob.glob(f"{input_dir}/*Rehab PBJ.xlsx")
-
-            if not rehab_files:
-                print("Error: No Rehab PBJ files found")
-                return
-
-            print(f"Found {len(rehab_files)} Rehab PBJ files to process")
-
-            successful = 0
-            for rehab_file in rehab_files:
-                try:
-                    success = self._process_single_rehab_file(
-                        rehab_file, df_master, output_dir
-                    )
-                    if success:
-                        successful += 1
-                except Exception as e:
-                    print(f"Error processing {Path(rehab_file).name}: {e}")
-                    continue
-
-            print(
-                f"\nSuccessfully processed {successful}/{len(rehab_files)} Rehab PBJ files"
-            )
+            for quarter, rehab_files in self.rehab_dict.items():
+                for rehab_file in rehab_files:
+                    try:
+                        self._process_single_rehab_file(rehab_file, quarter)
+                    except Exception as e:
+                        print(f"Error processing {Path(rehab_file).name}: {e}")
+                        continue
 
         except Exception as e:
             print(f"Error in process_rehab_pbj_files: {e}")
             raise
 
-    def _process_single_rehab_file(
-        self, rehab_file: str, df_master: pd.DataFrame, output_dir: str
-    ) -> bool:
+    def _process_single_rehab_file(self, rehab_file: str, quarter: str) -> bool:
         """Process a single Rehab PBJ file."""
-        rehab_filename = Path(rehab_file).name
+        print(f"\nProcessing Rehab PBJ for {quarter}...")
 
-        # Parse filename
-        match = re.match(r"(\d{4} Q\d+)\s+(.+?)\s+Rehab PBJ\.xlsx", rehab_filename)
-        if not match:
-            print(f"Error: Could not parse rehab filename format: {rehab_filename}")
-            return False
+        # Process the file and split by Facility
+        df_rehab_groups = self.process_rehab_pbj(rehab_file)
 
-        quarter, facility_name = match.groups()
-        print(f"\nProcessing {quarter} Rehab PBJ...")
-
-        # Process the file
-        df_rehab_groups = self.process_rehab_pbj(rehab_file, df_master)
-
-        # Export each site's data
+        # Export each DataFrame split
         for df_site in df_rehab_groups:
             if df_site.empty:
                 continue
-
             site_name = df_site[self.config.rehab_site_work].iloc[0]
             output_filename = f"{quarter} {site_name} Rehab PBJ.xlsx"
-            output_path = Path(output_dir) / output_filename
+            output_path = Path(self.rehab_dir) / output_filename
             df_site.to_excel(output_path, index=False)
-            print(f"  - Rehab output: {output_path}")
+            print(f"  - {output_path}")
 
         return True
 
@@ -719,12 +704,10 @@ class PBJProcessor:
 
         # Remove interchangeable, generic terms
         interchangeable_keywords = [
-            "post acute",
             "acute",
+            "post acute",
             "care",
             "center",
-            "facility",
-            "rehab",
             "convalescent hospital",
             "new",
         ]
@@ -742,17 +725,18 @@ class PBJProcessor:
 def main():
     """Main function to run the PBJ processing."""
     try:
-        processor = PBJProcessor()
-
-        # For regular PBJ processing:
-        processor.process_pbj_files(
+        processor = PBJProcessor(
             input_dir="input",
             processed_dir="output/processed",
             merged_dir="output/merged",
+            rehab_dir="output/rehab",
         )
 
+        # For regular PBJ processing:
+        processor.process_pbj_files()
+
         # For Rehab PBJ processing:
-        processor.process_rehab_pbj_files(input_dir="input", output_dir="output/rehab")
+        processor.process_rehab_pbj_files()
 
         print("\nAll processing completed successfully!")
 
