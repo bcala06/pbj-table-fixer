@@ -816,7 +816,7 @@ def main():
         )
 
         # For regular PBJ processing:
-        # processor.process_pbj_files()
+        processor.process_pbj_files()
 
         # For Rehab PBJ processing:
         processor.process_rehab_pbj_files()
