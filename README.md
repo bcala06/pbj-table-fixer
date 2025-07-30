@@ -23,50 +23,49 @@ Your working directory should contain the following:
 - Input files go in the `input/` folder
 - Output files will be generated inside `output/processed/`, `output/merged/`, and `output/rehab/`
 
-## 📝 File Naming Convention
+## File Naming Convention
 
 Correct file names are critical for successful processing:
 
 - **TCLL Excel**: `YYYY QX Facility_Name Time Card by Labor Level.xlsx`
 - **PBJ CSV**: `YYYY QX Facility_Name Payroll Based Journal.csv`
 - **Rehab PBJ Excel**: `YYYY QX Facility_Name Rehab PBJ.xlsx`
-- **Master List Excel**: Should include “Master List” in the filename (e.g., `Contract Employee ID Master List.xlsx`)
+- **Master List Excel**: `Contract Employee ID Master List.xlsx` (Can be any name as long as it contains `"Master List"`.)
 
-## ⚙️ Processing
+## Processing
 
-### 🕒 Time Card by Labor Level (TCLL)
+### Time Card by Labor Level (TCLL)
 
-File: `{Quarter} {Facility} Time Card by Labor Level.xlsx`
+File: `{Quarter} {Facility_Name} Time Card by Labor Level.xlsx`
 
 Steps:
 
-1. **Labor Distribution (Column C)**
+1. **Labor Distribution**
 
    - Remove duplicate text separated by `" - "`, keeping the first part only.
 
-2. **Emp # (Column D)**
+2. **Emp #**
 
    - Convert text to integer (numeric format).
 
-3. **Clock In Type (Column H)**
+3. **Clock In Type**
 
-   - Keep only rows with `"Clock In"` or `"Work Day Split"`.
+   - Only keep rows with `"Clock In"` or `"Work Day Split"`.
 
-4. **Clock Out Type (Column J)**
+4. **Clock Out Type**
 
-   - Keep only rows with `"Clock Out"` or `"Work Day Split"`.
+   - Only keep rows with `"Clock Out"` or `"Work Day Split"`.
 
-5. **Total Paid (Column N)**
+5. **Total Paid**
 
-   - Filter out rows where value is `≤ 8.00`.
+   - Only keep rows where the value is `>= 8.00`.
 
-6. **Remove (Column P)**
-   - For every 8 hours worked, subtract 0.5 hours:  
-     `Remove = floor(Total Paid / 8) * -0.5`
+6. **Remove**
+   - For every 8 hours worked, subtract 0.5 hours: `Remove = floor(Total Paid / 8) * -0.5`
 
-### 📊 Payroll Based Journal (PBJ)
+### Payroll Based Journal (PBJ)
 
-File: `{Quarter} {Facility} Payroll Based Journal.csv`
+File: `{Quarter} {Facility_Name} Payroll Based Journal.csv`
 
 Steps:
 
@@ -74,11 +73,11 @@ Steps:
 
    - Convert CSV to Excel.
 
-2. **Pay Types Description (Column F)**
+2. **Pay Types Description**
 
    - Keep only rows where value is `"Work"`.
 
-3. **Labor Distribution (Column L)**
+3. **Labor Distribution**
 
    - Rename values:  
      `"MDS - RN"` to `"RN with Admin Duties"`  
@@ -97,10 +96,10 @@ Steps:
    - Append processed TCLL records to PBJ.
    - Align columns; TCLL's `Remove` becomes PBJ's `Hours`.
 
-### 🏥 Rehab PBJ
+### Rehab PBJ
 
-File: `{Quarter} {Facility} Rehab PBJ.xlsx`
-Requires: `Master List Excel`
+- File: `{Quarter} {File_Name} Rehab PBJ.xlsx`
+- Requires: `Master List`
 
 Steps:
 
@@ -114,26 +113,39 @@ Steps:
 2. **Split Output**
    - Output one Excel file per `Site Worked` value.
 
-## 📤 Output
+## Output
 
 The program will generate:
 
-- ✅ **Processed files**:  
+- **Processed TCLL/PBJ files**:  
   Saved in `output/processed/`, one `.xlsx` for PBJ and one for TCLL
 
-- ✅ **Merged files**:  
+- **Merged PBJ files**:  
   Saved in `output/merged/`, combining PBJ and TCLL
 
-- ✅ **Rehab outputs**:  
+- **Rehab PBJ files**:  
   Saved in `output/rehab/`, one file per `Site Worked`
 
-## 🛠 Troubleshooting
+## FAQ
+
+- Is the file name tied to your code? Will it need to change next quarter?
+
+  - The only required part of the file names are: `Time Card by Labor Level`, `Payroll Based Journal`, `Rehab PBJ`, and `Master List`.
+  - The program will automatically use the provided `Quarter` in the filename without having to change the code.
+  - To ensure that the output naming conventions are preserved, it is recommended to use the same naming format for subsequent quarters.
+
+- Are the Column positions dependent on your code? What happens if the column changes?
+
+  - The program does **not** depend on the column positions. Instead, the program looks at the **column names** for processing.
+  - If the column names were to change in the future. The program will have to be modified to look for the new names.
+
+## Troubleshooting
 
 - Ensure filenames follow the specified patterns.
 - Check for renamed or missing columns in the input files.
 - If the script fails to find the Master List or cannot decode a file, verify the file format and encoding.
 
-## 🔒 Notes
+## Notes
 
 - This script assumes consistent formatting across files per quarter and facility.
 - All file lookups and exports are relative to the script’s working directory.
