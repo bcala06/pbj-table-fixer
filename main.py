@@ -262,7 +262,7 @@ class PBJProcessor:
 
         return df
 
-    def process_pbj(self, file_path: str) -> pd.DataFrame:
+    def process_pbj(self, file_path: str, filter: bool = True) -> pd.DataFrame:
         """Load and process the regular PBJ CSV."""
         try:
             if not Path(file_path).exists():
@@ -282,7 +282,8 @@ class PBJProcessor:
             df_pbj = self._parse_dates(df_pbj)
 
             # Apply filters and transformations
-            df_pbj = self._apply_pbj_filters(df_pbj)
+            if filter:
+                df_pbj = self._apply_pbj_filters(df_pbj)
 
             print(f"Processed PBJ with {len(df_pbj)} records")
             return df_pbj
@@ -383,7 +384,7 @@ class PBJProcessor:
             print(f"Error merging TCLL and PBJ: {e}")
             raise
 
-    def process_rehab_pbj(self, file_path: str, name_match_threshold: int = 90) -> List[pd.DataFrame]:
+    def process_rehab_pbj(self, file_path: str, quarter: str, name_match_threshold: int = 90) -> List[pd.DataFrame]:
         """Process rehab PBJ using masterlist for EID lookup."""
         try:
             if not Path(file_path).exists():
@@ -412,9 +413,9 @@ class PBJProcessor:
                 self.config.rehab_site_work
             ):
                 print(f"\nProcessing group: {group_name}")
-                processed_group = self._match_rehab_eids(group_df, name_match_threshold).reset_index(drop=True)
+                processed_group = self._match_rehab_eids(group_df, group_name, quarter, name_match_threshold).reset_index(drop=True)
                 processed_groups.append(processed_group)
-                print(f"Completed processing for group: {group_name}")
+                print("Completed processing for group.")
 
             print(f"\nProcessed Rehab PBJ into {len(processed_groups)} site groups")
             return processed_groups
@@ -423,7 +424,7 @@ class PBJProcessor:
             print(f"Error processing Rehab PBJ: {e}")
             raise
 
-    def _match_rehab_eids(self, df_rehab: pd.DataFrame, threshold: int) -> pd.DataFrame:
+    def _match_rehab_eids(self, df_rehab: pd.DataFrame, group_name: str, quarter: str, threshold: int) -> pd.DataFrame:
         """Match rehab employee names to master list EIDs."""
         # Create working copies with normalized columns
         df_rehab = df_rehab.copy()
@@ -441,23 +442,98 @@ class PBJProcessor:
         seen_log_keys = set()
         matches_found = 0
 
+        # Cache already-searched EIDs for faster search
+        eid_cache: dict[tuple(str, str, str), str] = {}
+
+        # Try to load the corresponding standard PBJ from the same group
+        current_facility = group_name
+        df_group_pbj: pd.DataFrame | None = None
+        try:
+            for group_facility in self.group_dict[quarter].keys():
+                if self._match_site_alias(group_facility, current_facility):
+                    group_pbj_path = self.group_dict[quarter][group_facility].pbj_path
+                    df_group_pbj = self.process_pbj(group_pbj_path, filter=False)
+                    break
+        except Exception as e:
+            print(f"Error loading PBJ for {group_name}: {e}")
+            df_group_pbj = None
+
+        # No corresponding PBJ :: keep unprocessed EID without checking.
+        if df_group_pbj is None:
+            print(f"Warning: Standard PBJ File for {group_name} not found. Standard EID validation disabled.")
+                
+        # Iterate through rows to validate/replace EIDs
         for idx, row in df_rehab.iterrows():
-            if (
-                row["_norm_site_work"] != row["_norm_facility"]
-                and row["_norm_facility"] != ""
-            ):
-                log_key = (row["_norm_name"], row["_norm_site_work"])
+            log_key = (row["_norm_name"], row["_norm_site_work"], row["_norm_facility"])
+            
+            # Check cache for valid EID
+            if log_key in eid_cache.keys():
+                df_rehab.loc[idx, self.config.rehab_eid] = eid_cache[log_key]
+                matches_found += 1
 
-                # Find site matches
-                site_matches = df_master[
-                    df_master["_norm_site_work"].apply(
-                        lambda s: row["_norm_site_work"] in s
-                        or s in row["_norm_site_work"]
+            # Check PBJ for standard EID
+            elif (row["_norm_site_work"] == row["_norm_facility"] and
+                row["_norm_facility"] != ""):
+                if df_group_pbj is not None and not df_group_pbj.empty:
+                    # Create normalized names for PBJ employees
+                    df_group_pbj_temp = df_group_pbj.copy()
+                    df_group_pbj_temp['_norm_full_name'] = (
+                        df_group_pbj_temp[self.config.pbj_first_name].astype(str) + " " + 
+                        df_group_pbj_temp[self.config.pbj_last_name].astype(str)
+                    ).apply(self._normalize_name)
+                    
+                    # Find name match in PBJ
+                    result = process.extract(
+                        row["_norm_name"],
+                        df_group_pbj_temp["_norm_full_name"].tolist(),
+                        scorer=fuzz.token_sort_ratio,
                     )
-                ]
+                    name_matches = [match for match in result if match[1] >= threshold]
 
+                    # Name match found :: get EID from PBJ
+                    if len(name_matches) >= 1:
+                        matched_name = name_matches[0][0]
+                        matched_row = df_group_pbj_temp[
+                            df_group_pbj_temp["_norm_full_name"] == matched_name
+                        ].iloc[0]
+                        matched_eid = str(matched_row[self.config.pbj_employee_number])
+                        df_rehab.loc[idx, self.config.rehab_eid] = matched_eid
+                        eid_cache[log_key] = matched_eid
+                        matches_found += 1
+                        if log_key not in seen_log_keys:
+                            print(
+                                f"[Standard EID]  {matched_eid}     "
+                                f"{row[self.config.rehab_full_name]}"
+                            )
+                            seen_log_keys.add(log_key)
+
+                    # Name match not found :: clear EID
+                    else:
+                        df_rehab.loc[idx, self.config.rehab_eid] = ""
+                        if log_key not in seen_log_keys:
+                            print(
+                                "[Standard EID]  No Match  "
+                                f"{row[self.config.rehab_full_name]}"
+                            )
+                            seen_log_keys.add(log_key)
+                else:
+                    # No PBJ file found for facility :: keep EID (see above)
+                    # df_rehab.loc[idx, self.config.rehab_eid] = ""
+                    if group_name not in seen_log_keys:
+                        # print(f"[PBJ NOT FOUND FOR FACILITY]  {group_name}")
+                        seen_log_keys.add(group_name)
+
+            # Check Master List for Contract EID
+            elif (row["_norm_site_work"] != row["_norm_facility"] and 
+                row["_norm_facility"] != ""):
+                
+                # Find site matches
+                site_matches = df_master[df_master["_norm_site_work"].apply(
+                        lambda s: row["_norm_site_work"] in s
+                        or s in row["_norm_site_work"])]
+                
+                # Find name match
                 if not site_matches.empty:
-                    # Find name match
                     result = process.extract(
                         row["_norm_name"],
                         site_matches["_norm_name"].tolist(),
@@ -470,7 +546,8 @@ class PBJProcessor:
                         df_rehab.loc[idx, self.config.rehab_eid] = ""
                         if log_key not in seen_log_keys:
                             print(
-                                f"[MULTIPLE MATCHES]           {row[self.config.rehab_full_name]}"
+                                f"[Contract EID]  conflict  "
+                                f"{row[self.config.rehab_full_name]}"
                             )
                             seen_log_keys.add(log_key)
 
@@ -481,15 +558,16 @@ class PBJProcessor:
                         matched_row = site_matches[
                             site_matches["_norm_name"] == matched_name
                         ].iloc[0]
-                        df_rehab.loc[idx, self.config.rehab_eid] = str(
-                            matched_row[self.config.master_eid]
-                        )
+                        matched_eid = str(matched_row[self.config.master_eid])
+                        df_rehab.loc[idx, self.config.rehab_eid] = matched_eid
+                        eid_cache[log_key] = matched_eid
                         matches_found += 1
 
                         if log_key not in seen_log_keys:
                             print(
-                                f"[SINGLE MATCH]     {matched_row[self.config.master_eid]}"
-                                f"   {row[self.config.rehab_full_name]}"
+                                "[Contract EID]  "
+                                f"{matched_row[self.config.master_eid]}    "
+                                f"{row[self.config.rehab_full_name]}"
                             )
                             seen_log_keys.add(log_key)
 
@@ -498,23 +576,22 @@ class PBJProcessor:
                         df_rehab.loc[idx, self.config.rehab_eid] = ""
                         if log_key not in seen_log_keys:
                             print(
-                                f"[NO MATCH]                   {row[self.config.rehab_full_name]}"
+                                "[Contract EID]  no match  "
+                                f"{row[self.config.rehab_full_name]}"
                             )
                             seen_log_keys.add(log_key)
 
                 # Site match not found :: clear EID
                 else:
                     df_rehab.loc[idx, self.config.rehab_eid] = ""
-                    if log_key not in seen_log_keys:
-                        print(f"[NO MATCH]  {row[self.config.rehab_site_work]}")
-                        seen_log_keys.add(log_key)
+                    if group_name not in seen_log_keys:
+                        print(f"[Contract EID]  missing site  {group_name}")
+                        seen_log_keys.add(group_name)
 
         # Clean up temporary columns
         temp_cols = ["_norm_name", "_norm_site_work", "_norm_facility"]
-        df_rehab.drop(columns=temp_cols, inplace=True, errors="ignore")
-        df_master.drop(
-            columns=["_norm_name", "_norm_site_work"], inplace=True, errors="ignore"
-        )
+        df_rehab.drop(columns=temp_cols, inplace=True)
+        df_master.drop(columns=["_norm_name", "_norm_site_work"], inplace=True)
 
         print(f"Found {matches_found} EID matches out of {len(df_rehab)} records")
         return df_rehab
@@ -594,7 +671,7 @@ class PBJProcessor:
         print(f"\nProcessing Rehab PBJ for {quarter}...")
 
         # Process the file and split by Facility
-        df_rehab_groups = self.process_rehab_pbj(rehab_file)
+        df_rehab_groups = self.process_rehab_pbj(rehab_file, quarter)
 
         # Export each DataFrame split
         for df_site in df_rehab_groups:
@@ -629,15 +706,10 @@ class PBJProcessor:
         for col in df.columns:
             if col in date_columns or "date" in col.lower():
                 try:
-                    # Check if column contains date-like data
-                    if df[
-                        col
-                    ].dtype == "object" or pd.api.types.is_datetime64_any_dtype(
-                        df[col]
-                    ):
-                        # Convert to datetime and extract date only
+                    # Convert column to date if column contains date-like data
+                    if (df[col].dtype == "object" or 
+                        pd.api.types.is_datetime64_any_dtype(df[col])):
                         df[col] = pd.to_datetime(df[col], errors="coerce").dt.date
-                        # print(f"Parsed date column: {col}")
                 except Exception as e:
                     print(f"Error: Could not parse date column {col}: {e}")
                     continue
@@ -721,6 +793,17 @@ class PBJProcessor:
 
         return site
 
+    @staticmethod
+    def _match_site_alias(group: str, site_work: str) -> bool:
+        """Check if a Group Name (File Name) is an alias or code for a Site Work (Facility Full Name)."""
+        site_codes = {
+            "CCRC": "Community",
+        }
+        if (group in site_work or
+            (group in site_codes.keys() and site_codes[group] in site_work)):
+            return True
+        return False
+
 
 def main():
     """Main function to run the PBJ processing."""
@@ -733,7 +816,7 @@ def main():
         )
 
         # For regular PBJ processing:
-        processor.process_pbj_files()
+        # processor.process_pbj_files()
 
         # For Rehab PBJ processing:
         processor.process_rehab_pbj_files()
