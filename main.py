@@ -546,7 +546,7 @@ class PBJProcessor:
                         df_rehab.loc[idx, self.config.rehab_eid] = ""
                         if log_key not in seen_log_keys:
                             print(
-                                f"[Contract EID]  conflict  "
+                                f"[Contract EID]  Conflict  "
                                 f"{row[self.config.rehab_full_name]}"
                             )
                             seen_log_keys.add(log_key)
@@ -576,7 +576,7 @@ class PBJProcessor:
                         df_rehab.loc[idx, self.config.rehab_eid] = ""
                         if log_key not in seen_log_keys:
                             print(
-                                "[Contract EID]  no match  "
+                                "[Contract EID]  No Match  "
                                 f"{row[self.config.rehab_full_name]}"
                             )
                             seen_log_keys.add(log_key)
@@ -585,7 +585,7 @@ class PBJProcessor:
                 else:
                     df_rehab.loc[idx, self.config.rehab_eid] = ""
                     if group_name not in seen_log_keys:
-                        print(f"[Contract EID]  missing site  {group_name}")
+                        print(f"[Contract EID]  Missing Site  {group_name}")
                         seen_log_keys.add(group_name)
 
         # Clean up temporary columns
