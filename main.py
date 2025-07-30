@@ -1,15 +1,14 @@
+import glob
+import msvcrt
 import os
 import re
-import glob
 import warnings
-from typing import List, Dict, Optional, Tuple
-from pathlib import Path
 from dataclasses import dataclass
-from datetime import datetime
+from pathlib import Path
+from typing import List, Optional
 
 import pandas as pd
-from openpyxl import load_workbook
-from rapidfuzz import process, fuzz
+from rapidfuzz import fuzz, process
 
 # Ignore unneeded warnings
 warnings.filterwarnings("ignore", category=UserWarning, module="openpyxl")
@@ -88,11 +87,11 @@ class PBJProcessor:
             # Filter to required columns only
             df_master = df_master[list(required_columns)]
 
-            print(f"✓ Loaded master list with {len(df_master)} records")
+            print(f"Loaded master list with {len(df_master)} records")
             return df_master
 
         except Exception as e:
-            print(f"✗ Error loading master file: {e}")
+            print(f"Error loading master file: {e}")
             raise
 
     def process_tcll(self, file_path: str) -> pd.DataFrame:
@@ -123,11 +122,11 @@ class PBJProcessor:
             # Apply filters and transformations
             df_tcll = self._apply_tcll_filters(df_tcll)
 
-            print(f"✓ Processed TCLL with {len(df_tcll)} records")
+            print(f"Processed TCLL with {len(df_tcll)} records")
             return df_tcll
 
         except Exception as e:
-            print(f"✗ Error processing TCLL file: {e}")
+            print(f"Error processing TCLL file: {e}")
             raise
 
     def _apply_tcll_filters(self, df: pd.DataFrame) -> pd.DataFrame:
@@ -199,11 +198,11 @@ class PBJProcessor:
             # Apply filters and transformations
             df_pbj = self._apply_pbj_filters(df_pbj)
 
-            print(f"✓ Processed PBJ with {len(df_pbj)} records")
+            print(f"Processed PBJ with {len(df_pbj)} records")
             return df_pbj
 
         except Exception as e:
-            print(f"✗ Error processing PBJ file: {e}")
+            print(f"Error processing PBJ file: {e}")
             raise
 
     def _apply_pbj_filters(self, df: pd.DataFrame) -> pd.DataFrame:
@@ -267,7 +266,7 @@ class PBJProcessor:
                     rename_mapping[tcll_col] = pbj_col
 
             if not tcll_columns_to_use:
-                print("⚠ Warning: No matching columns found for TCLL merge")
+                print("Error: No matching columns found for TCLL merge")
                 return df_pbj
 
             # Select only the defined columns from TCLL and rename them
@@ -292,12 +291,12 @@ class PBJProcessor:
                 )
 
             print(
-                f"✓ Merged data: {len(df_pbj)} PBJ + {len(df_tcll_processed)} TCLL = {len(merged_df)} total records"
+                f"Merged data: {len(df_pbj)} PBJ + {len(df_tcll_processed)} TCLL = {len(merged_df)} total records"
             )
             return merged_df
 
         except Exception as e:
-            print(f"✗ Error merging TCLL and PBJ: {e}")
+            print(f"Error merging TCLL and PBJ: {e}")
             raise
 
     def process_rehab_pbj(
@@ -339,13 +338,13 @@ class PBJProcessor:
                 ).reset_index(drop=True)
 
                 processed_groups.append(processed_group)
-                print(f"✓ Completed processing for group: {group_name}")
+                print(f"Completed processing for group: {group_name}")
 
-            print(f"\n✓ Processed Rehab PBJ into {len(processed_groups)} site groups")
+            print(f"\nProcessed Rehab PBJ into {len(processed_groups)} site groups")
             return processed_groups
 
         except Exception as e:
-            print(f"✗ Error processing Rehab PBJ: {e}")
+            print(f"Error processing Rehab PBJ: {e}")
             raise
 
     def _match_rehab_eids(
@@ -453,7 +452,7 @@ class PBJProcessor:
             columns=["_norm_name", "_norm_site_work"], inplace=True, errors="ignore"
         )
 
-        print(f"✓ Found {matches_found} EID matches out of {len(df_rehab)} records")
+        print(f"Found {matches_found} EID matches out of {len(df_rehab)} records")
         return df_rehab
 
     def process_pbj_files(
@@ -472,7 +471,7 @@ class PBJProcessor:
             pbj_files = glob.glob(f"{input_dir}/*Payroll Based Journal.csv")
 
             if not pbj_files:
-                print("⚠ No PBJ files found")
+                print("Error: No PBJ files found")
                 return
 
             print(f"Found {len(pbj_files)} PBJ files to process")
@@ -486,15 +485,15 @@ class PBJProcessor:
                     if success:
                         successful += 1
                 except Exception as e:
-                    print(f"✗ Error processing {Path(pbj_file).name}: {e}")
+                    print(f"Error processing {Path(pbj_file).name}: {e}")
                     continue
 
             print(
-                f"\n✓ Successfully processed {successful}/{len(pbj_files)} PBJ files\n"
+                f"\nSuccessfully processed {successful}/{len(pbj_files)} PBJ files\n"
             )
 
         except Exception as e:
-            print(f"✗ Error in process_pbj_files: {e}")
+            print(f"Error in process_pbj_files: {e}")
             raise
 
     def _process_single_pbj_file(
@@ -508,7 +507,7 @@ class PBJProcessor:
             r"(\d{4} Q\d+)\s+(.+?)\s+Payroll Based Journal\.csv", pbj_filename
         )
         if not match:
-            print(f"⚠ Could not parse filename format: {pbj_filename}")
+            print(f"Error: Could not parse filename format: {pbj_filename}")
             return False
 
         quarter, facility_name = match.groups()
@@ -521,7 +520,7 @@ class PBJProcessor:
         tcll_files = glob.glob(tcll_pattern)
 
         if not tcll_files:
-            print(f"⚠ No TCLL file found for {quarter} {facility_name}")
+            print(f"Error: No TCLL file found for {quarter} {facility_name}")
             return False
 
         tcll_file = tcll_files[0]
@@ -541,7 +540,7 @@ class PBJProcessor:
         processed_tcll.to_excel(processed_tcll_path, index=False)
         merged_data.to_excel(merged_path, index=False)
 
-        print(f"✓ {quarter} {facility_name} processed successfully")
+        print(f"{quarter} {facility_name} processed successfully")
         print(f"  - Processed PBJ: {processed_pbj_path}")
         print(f"  - Processed TCLL: {processed_tcll_path}")
         print(f"  - Merged output: {merged_path}")
@@ -568,7 +567,7 @@ class PBJProcessor:
             rehab_files = glob.glob(f"{input_dir}/*Rehab PBJ.xlsx")
 
             if not rehab_files:
-                print("⚠ No Rehab PBJ files found")
+                print("Error: No Rehab PBJ files found")
                 return
 
             print(f"Found {len(rehab_files)} Rehab PBJ files to process")
@@ -582,15 +581,15 @@ class PBJProcessor:
                     if success:
                         successful += 1
                 except Exception as e:
-                    print(f"✗ Error processing {Path(rehab_file).name}: {e}")
+                    print(f"Error processing {Path(rehab_file).name}: {e}")
                     continue
 
             print(
-                f"\n✓ Successfully processed {successful}/{len(rehab_files)} Rehab PBJ files"
+                f"\nSuccessfully processed {successful}/{len(rehab_files)} Rehab PBJ files"
             )
 
         except Exception as e:
-            print(f"✗ Error in process_rehab_pbj_files: {e}")
+            print(f"Error in process_rehab_pbj_files: {e}")
             raise
 
     def _process_single_rehab_file(
@@ -602,7 +601,7 @@ class PBJProcessor:
         # Parse filename
         match = re.match(r"(\d{4} Q\d+)\s+(.+?)\s+Rehab PBJ\.xlsx", rehab_filename)
         if not match:
-            print(f"⚠ Could not parse rehab filename format: {rehab_filename}")
+            print(f"Error: Could not parse rehab filename format: {rehab_filename}")
             return False
 
         quarter, facility_name = match.groups()
@@ -653,9 +652,9 @@ class PBJProcessor:
                     ):
                         # Convert to datetime and extract date only
                         df[col] = pd.to_datetime(df[col], errors="coerce").dt.date
-                        # print(f"✓ Parsed date column: {col}")
+                        # print(f"Parsed date column: {col}")
                 except Exception as e:
-                    print(f"⚠ Could not parse date column {col}: {e}")
+                    print(f"Error: Could not parse date column {col}: {e}")
                     continue
         return df
 
@@ -755,18 +754,16 @@ def main():
         # For Rehab PBJ processing:
         processor.process_rehab_pbj_files(input_dir="input", output_dir="output/rehab")
 
-        print("\n✓ All processing completed successfully!")
+        print("\nAll processing completed successfully!")
 
         if os.name == "nt":
-            import msvcrt
-
             print("Press any key to exit...")
             msvcrt.getch()
         else:
             input("Press Enter to exit...")
 
     except Exception as e:
-        print(f"\n✗ Processing failed: {e}")
+        print(f"\nProcessing failed: {e}")
         raise
 
 
