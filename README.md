@@ -131,7 +131,7 @@ The program will generate:
 - Is the file name tied to your code? Will it need to change next quarter?
 
   - The only required part of the file names are: `Time Card by Labor Level`, `Payroll Based Journal`, `Rehab PBJ`, and `Master List`.
-  - The program will automatically use the provided `Quarter` in the filename without having to change the code.
+  - The program will automatically use the provided quarter (formatted as `YYYY QX`) in the filename without having to change the code.
   - To ensure that the output naming conventions are preserved, it is recommended to use the same naming format for subsequent quarters.
 
 - Are the Column positions dependent on your code? What happens if the column changes?
