@@ -438,12 +438,9 @@ class PBJProcessor:
         df_master.loc[:, "_norm_name"] = df_master[self.config.master_full_name].apply(self._normalize_name)
         df_master.loc[:, "_norm_site_work"] = df_master[self.config.master_site_work].apply(self._normalize_site)
 
-        # Track processed entries to avoid duplicate logging
-        seen_log_keys = set()
-        matches_found = 0
-
-        # Cache already-searched EIDs for faster search
+        # Cache already searched-keys for faster lookups
         eid_cache: dict[tuple(str, str, str), str] = {}
+        matches_found = 0
 
         # Try to load the corresponding standard PBJ from the same group
         current_facility = group_name
@@ -464,11 +461,12 @@ class PBJProcessor:
                 
         # Iterate through rows to validate/replace EIDs
         for idx, row in df_rehab.iterrows():
-            log_key = (row["_norm_name"], row["_norm_site_work"], row["_norm_facility"])
+            cache_key = (row["_norm_name"], row["_norm_site_work"], row["_norm_facility"])
+            cache_eid = ""
             
             # Check cache for valid EID
-            if log_key in eid_cache.keys():
-                df_rehab.loc[idx, self.config.rehab_eid] = eid_cache[log_key]
+            if cache_key in eid_cache.keys():
+                cache_eid = eid_cache[cache_key]
                 matches_found += 1
 
             # Check PBJ for standard EID
@@ -492,36 +490,36 @@ class PBJProcessor:
 
                     # Name match found :: get EID from PBJ
                     if len(name_matches) >= 1:
-                        matched_name = name_matches[0][0]
-                        matched_row = df_group_pbj_temp[
-                            df_group_pbj_temp["_norm_full_name"] == matched_name
-                        ].iloc[0]
-                        matched_eid = str(matched_row[self.config.pbj_employee_number])
-                        df_rehab.loc[idx, self.config.rehab_eid] = matched_eid
-                        eid_cache[log_key] = matched_eid
-                        matches_found += 1
-                        if log_key not in seen_log_keys:
+                        matched_eids = set()
+                        for match in name_matches:
+                            matched_name = match[0]
+                            matched_row = df_group_pbj_temp[df_group_pbj_temp["_norm_full_name"] == matched_name].iloc[0]
+                            matched_eid = matched_row[self.config.pbj_employee_number]
+                            matched_eids.add(matched_eid)
+                        
+                        # Replace EID with match if unique, else clear
+                        if len(matched_eids) == 1:
+                            cache_eid = list(matched_eids)[0]
+                            matches_found += 1
                             print(
-                                f"[Standard EID]  {matched_eid}     "
+                                f"[Standard EID]  {cache_eid}     "
                                 f"{row[self.config.rehab_full_name]}"
                             )
-                            seen_log_keys.add(log_key)
-
+                        else:
+                            print(
+                                "[Standard EID]  Conflict  "
+                                f"{row[self.config.rehab_full_name]}"
+                            )
+                    
                     # Name match not found :: clear EID
                     else:
-                        df_rehab.loc[idx, self.config.rehab_eid] = ""
-                        if log_key not in seen_log_keys:
-                            print(
-                                "[Standard EID]  No Match  "
-                                f"{row[self.config.rehab_full_name]}"
-                            )
-                            seen_log_keys.add(log_key)
-                else:
-                    # No PBJ file found for facility :: keep EID (see above)
-                    # df_rehab.loc[idx, self.config.rehab_eid] = ""
-                    if group_name not in seen_log_keys:
-                        # print(f"[PBJ NOT FOUND FOR FACILITY]  {group_name}")
-                        seen_log_keys.add(group_name)
+                        print(
+                            "[Standard EID]  No Match  "
+                            f"{row[self.config.rehab_full_name]}"
+                        )
+
+                # Save EID to cache
+                eid_cache[cache_key] = cache_eid
 
             # Check Master List for Contract EID
             elif (row["_norm_site_work"] != row["_norm_facility"] and 
@@ -540,53 +538,48 @@ class PBJProcessor:
                         scorer=fuzz.token_sort_ratio,
                     )
                     name_matches = [match for match in result if match[1] >= threshold]
-
-                    # Multiple name matches :: clear EID
-                    if len(name_matches) > 1:
-                        df_rehab.loc[idx, self.config.rehab_eid] = ""
-                        if log_key not in seen_log_keys:
-                            print(
-                                f"[Contract EID]  Conflict  "
-                                f"{row[self.config.rehab_full_name]}"
-                            )
-                            seen_log_keys.add(log_key)
-
+                    
                     # Single name match found :: swap EID
-                    elif len(name_matches) == 1:
-                        # Get the matched name from the tuple (name, score, index)
-                        matched_name = name_matches[0][0]
-                        matched_row = site_matches[
-                            site_matches["_norm_name"] == matched_name
-                        ].iloc[0]
-                        matched_eid = str(matched_row[self.config.master_eid])
-                        df_rehab.loc[idx, self.config.rehab_eid] = matched_eid
-                        eid_cache[log_key] = matched_eid
-                        matches_found += 1
+                    if len(name_matches) >= 1:
+                        matched_eids = set()
+                        for match in name_matches:
+                            matched_name = match[0]
+                            matched_row = site_matches[site_matches["_norm_name"] == matched_name].iloc[0]
+                            matched_eid = str(matched_row[self.config.master_eid])
+                            matched_eids.add(matched_eid)
 
-                        if log_key not in seen_log_keys:
+                        if len(matched_eids) == 1:
+                            cache_eid = list(matched_eids)[0]
+                            matches_found += 1
                             print(
-                                "[Contract EID]  "
-                                f"{matched_row[self.config.master_eid]}    "
+                                f"[Contract EID]  {cache_eid}     "
                                 f"{row[self.config.rehab_full_name]}"
                             )
-                            seen_log_keys.add(log_key)
+                        else:
+                            print(
+                                "[Contract EID]  Conflict  "
+                                f"{row[self.config.rehab_full_name]}"
+                            )
 
                     # Name match not found :: clear EID
                     else:
-                        df_rehab.loc[idx, self.config.rehab_eid] = ""
-                        if log_key not in seen_log_keys:
-                            print(
-                                "[Contract EID]  No Match  "
-                                f"{row[self.config.rehab_full_name]}"
-                            )
-                            seen_log_keys.add(log_key)
-
+                        print(
+                            "[Contract EID]  No Match  "
+                            f"{row[self.config.rehab_full_name]}"
+                        )
+                
                 # Site match not found :: clear EID
                 else:
-                    df_rehab.loc[idx, self.config.rehab_eid] = ""
-                    if group_name not in seen_log_keys:
-                        print(f"[Contract EID]  Missing Site  {group_name}")
-                        seen_log_keys.add(group_name)
+                    print(
+                        "[Contract EID]  No Match  "
+                        f"{row[self.config.rehab_site_work]}"
+                    )
+                
+                # Save EID to cache
+                eid_cache[cache_key] = cache_eid
+        
+            # Apply retrieved EID from Cache/PBJ/Master
+            df_rehab.loc[idx, self.config.rehab_eid] = cache_eid
 
         # Clean up temporary columns
         temp_cols = ["_norm_name", "_norm_site_work", "_norm_facility"]
