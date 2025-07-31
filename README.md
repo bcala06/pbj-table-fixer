@@ -56,11 +56,16 @@ Steps:
 
    - Only keep rows with `"Clock Out"` or `"Work Day Split"`.
 
-5. **Total Paid**
+5. **Clock In Time + Clock Out Time**
+
+   - Remove rows where `"Clock In Time" == 8:00 AM` and `"Clock Out Time" == 4:30 PM`
+
+6. **Total Paid**
 
    - Only keep rows where the value is `>= 8.00`.
 
-6. **Remove**
+7. **Remove**
+
    - For every 8 hours worked, subtract 0.5 hours: `Remove = floor(Total Paid / 8) * -0.5`
 
 ### Payroll Based Journal (PBJ)
@@ -81,7 +86,7 @@ Steps:
 
    - Rename values:  
      `"MDS - RN"` to `"RN with Admin Duties"`  
-     `"LVN - RN"` to `"LVN with Admin Duties"`
+     `"MDS - LVN"` to `"LVN with Admin Duties"`
    - Remove rows containing:
      - `Physician Assistant`
      - `Occupational Therapist`
@@ -105,12 +110,16 @@ Steps:
 
 1. **Employee ID Correction**
 
-   - If `Site Worked` and `Primary Facility` match:
-     - Use the original Employee number.
-   - If `Site Worked` and `Primary Facility` do not match:
-     - Use the EID from the Master List instead.
+   - If `"Site Worked"` and `"Primary Facility"` match:
+
+     - Find the EID from the standard PBJ whose `{Facility_Name}` corresponds to `Site Worked`.
+
+   - If `"Site Worked"` and `"Primary Facility"` do not match:
+
+     - Use the EID from the `Contract Employee ID Master List`.
 
 2. **Split Output**
+
    - Output one Excel file per `Site Worked` value.
 
 ## Output
