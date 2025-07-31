@@ -63,6 +63,7 @@ class PathGroup:
     pbj_path: Path
     tcll_path: Path
 
+
 class PBJProcessor:
     """Main class for processing PBJ-related files."""
 
@@ -79,7 +80,7 @@ class PBJProcessor:
         self.merged_dir: str = merged_dir
         self.rehab_dir: str = rehab_dir
         self.config = config or ColumnConfig()
-        
+
         self.df_master: pd.Dataframe = self.load_master()
         self.group_dict: defaultdict = defaultdict(dict)
         self.load_group_dict()
@@ -92,8 +93,10 @@ class PBJProcessor:
             masterlist_files = glob.glob(f"{self.input_dir}/*Master List*.xlsx")
             if not masterlist_files:
                 raise FileNotFoundError("Master list file not found")
-            file_path = masterlist_files[0] 
-            df_master = pd.read_excel(file_path, sheet_name=sheet_name, dtype={"EID": str})
+            file_path = masterlist_files[0]
+            df_master = pd.read_excel(
+                file_path, sheet_name=sheet_name, dtype={"EID": str}
+            )
 
             # Validate columns and filter for required columns only
             df_master = df_master.loc[:, ~df_master.columns.str.contains("^Unnamed")]
@@ -136,9 +139,7 @@ class PBJProcessor:
                 )
 
                 # Find corresponding TCLL for quarter and facility (if any)
-                tcll_pattern = (
-                    f"{self.input_dir}/*{quarter}*{facility}*Time Card by Labor Level.xlsx"
-                )
+                tcll_pattern = f"{self.input_dir}/*{quarter}*{facility}*Time Card by Labor Level.xlsx"
                 tcll_files = glob.glob(tcll_pattern)
                 if tcll_files:
                     tcll_file = tcll_files[0]
@@ -147,15 +148,15 @@ class PBJProcessor:
                         pbj_path=Path(self.input_dir) / pbj_filename,
                         tcll_path=Path(self.input_dir) / tcll_filename,
                     )
-                
+
                 print(f"Found files for {quarter} {facility}:")
                 print(f"  - PBJ:  {self.group_dict[quarter][facility].pbj_path}")
                 print(f"  - TCLL: {self.group_dict[quarter][facility].tcll_path}")
-        
+
         except Exception as e:
             print(f"Error loading PBJ files: {e}")
             raise
-    
+
     def load_rehab_dict(self) -> None:
         """Read input directory and group rehab PBJ files by Quarter."""
         try:
@@ -175,12 +176,12 @@ class PBJProcessor:
                     continue
                 quarter, facility = match.groups()
                 self.rehab_dict[quarter].append(rehab_file)
-            
+
             for quarter in self.rehab_dict.keys():
                 print(f"Found files for {quarter}:")
                 for rehab_file in self.rehab_dict[quarter]:
                     print(f"  - {rehab_file}")
-        
+
         except Exception as e:
             print(f"Error loading Rehab PBJ files: {e}")
             raise
@@ -320,7 +321,9 @@ class PBJProcessor:
 
         return df
 
-    def merge_tcll_pbj(self, df_tcll: pd.DataFrame, df_pbj: pd.DataFrame) -> pd.DataFrame:
+    def merge_tcll_pbj(
+        self, df_tcll: pd.DataFrame, df_pbj: pd.DataFrame
+    ) -> pd.DataFrame:
         """Merge TCLL and PBJ DataFrames."""
         try:
             tcll_mapping = {
@@ -384,7 +387,9 @@ class PBJProcessor:
             print(f"Error merging TCLL and PBJ: {e}")
             raise
 
-    def process_rehab_pbj(self, file_path: str, quarter: str, name_match_threshold: int = 90) -> List[pd.DataFrame]:
+    def process_rehab_pbj(
+        self, file_path: str, quarter: str, name_match_threshold: int = 90
+    ) -> List[pd.DataFrame]:
         """Process rehab PBJ using masterlist for EID lookup."""
         try:
             if not Path(file_path).exists():
@@ -413,7 +418,9 @@ class PBJProcessor:
                 self.config.rehab_site_work
             ):
                 print(f"\nProcessing group: {group_name}")
-                processed_group = self._match_rehab_eids(group_df, group_name, quarter, name_match_threshold).reset_index(drop=True)
+                processed_group = self._match_rehab_eids(
+                    group_df, group_name, quarter, name_match_threshold
+                ).reset_index(drop=True)
                 processed_groups.append(processed_group)
                 print("Completed processing for group.")
 
@@ -424,19 +431,31 @@ class PBJProcessor:
             print(f"Error processing Rehab PBJ: {e}")
             raise
 
-    def _match_rehab_eids(self, df_rehab: pd.DataFrame, group_name: str, quarter: str, threshold: int) -> pd.DataFrame:
+    def _match_rehab_eids(
+        self, df_rehab: pd.DataFrame, group_name: str, quarter: str, threshold: int
+    ) -> pd.DataFrame:
         """Match rehab employee names to master list EIDs."""
         # Create working copies with normalized columns
         df_rehab = df_rehab.copy()
         df_master = self.df_master.copy()
 
         # Normalize names and sites
-        df_rehab.loc[:, "_norm_name"] = df_rehab[self.config.rehab_full_name].apply(self._normalize_name)
-        df_rehab.loc[:, "_norm_site_work"] = df_rehab[self.config.rehab_site_work].apply(self._normalize_site)
-        df_rehab.loc[:, "_norm_facility"] = df_rehab[self.config.rehab_facility].apply(self._normalize_site)
-        
-        df_master.loc[:, "_norm_name"] = df_master[self.config.master_full_name].apply(self._normalize_name)
-        df_master.loc[:, "_norm_site_work"] = df_master[self.config.master_site_work].apply(self._normalize_site)
+        df_rehab.loc[:, "_norm_name"] = df_rehab[self.config.rehab_full_name].apply(
+            self._normalize_name
+        )
+        df_rehab.loc[:, "_norm_site_work"] = df_rehab[
+            self.config.rehab_site_work
+        ].apply(self._normalize_site)
+        df_rehab.loc[:, "_norm_facility"] = df_rehab[self.config.rehab_facility].apply(
+            self._normalize_site
+        )
+
+        df_master.loc[:, "_norm_name"] = df_master[self.config.master_full_name].apply(
+            self._normalize_name
+        )
+        df_master.loc[:, "_norm_site_work"] = df_master[
+            self.config.master_site_work
+        ].apply(self._normalize_site)
 
         # Cache already searched-keys for faster lookups
         eid_cache: dict[tuple(str, str, str), str] = {}
@@ -457,29 +476,38 @@ class PBJProcessor:
 
         # No corresponding PBJ :: keep unprocessed EID without checking.
         if df_group_pbj is None:
-            print(f"Warning: Standard PBJ File for {group_name} not found. Standard EID validation disabled.")
-                
+            print(
+                f"Warning: Standard PBJ File for {group_name} not found. Standard EID validation disabled."
+            )
+
         # Iterate through rows to validate/replace EIDs
         for idx, row in df_rehab.iterrows():
-            cache_key = (row["_norm_name"], row["_norm_site_work"], row["_norm_facility"])
+            cache_key = (
+                row["_norm_name"],
+                row["_norm_site_work"],
+                row["_norm_facility"],
+            )
             cache_eid = ""
-            
+
             # Check cache for valid EID
             if cache_key in eid_cache.keys():
                 cache_eid = eid_cache[cache_key]
                 matches_found += 1
 
             # Check PBJ for standard EID
-            elif (row["_norm_site_work"] == row["_norm_facility"] and
-                row["_norm_facility"] != ""):
+            elif (
+                row["_norm_site_work"] == row["_norm_facility"]
+                and row["_norm_facility"] != ""
+            ):
                 if df_group_pbj is not None and not df_group_pbj.empty:
                     # Create normalized names for PBJ employees
                     df_group_pbj_temp = df_group_pbj.copy()
-                    df_group_pbj_temp['_norm_full_name'] = (
-                        df_group_pbj_temp[self.config.pbj_first_name].astype(str) + " " + 
-                        df_group_pbj_temp[self.config.pbj_last_name].astype(str)
+                    df_group_pbj_temp["_norm_full_name"] = (
+                        df_group_pbj_temp[self.config.pbj_first_name].astype(str)
+                        + " "
+                        + df_group_pbj_temp[self.config.pbj_last_name].astype(str)
                     ).apply(self._normalize_name)
-                    
+
                     # Find name match in PBJ
                     result = process.extract(
                         row["_norm_name"],
@@ -493,10 +521,12 @@ class PBJProcessor:
                         matched_eids = set()
                         for match in name_matches:
                             matched_name = match[0]
-                            matched_row = df_group_pbj_temp[df_group_pbj_temp["_norm_full_name"] == matched_name].iloc[0]
+                            matched_row = df_group_pbj_temp[
+                                df_group_pbj_temp["_norm_full_name"] == matched_name
+                            ].iloc[0]
                             matched_eid = matched_row[self.config.pbj_employee_number]
                             matched_eids.add(matched_eid)
-                        
+
                         # Replace EID with match if unique, else clear
                         if len(matched_eids) == 1:
                             cache_eid = list(matched_eids)[0]
@@ -510,7 +540,7 @@ class PBJProcessor:
                                 "[Standard EID]  Conflict  "
                                 f"{row[self.config.rehab_full_name]}"
                             )
-                    
+
                     # Name match not found :: clear EID
                     else:
                         print(
@@ -522,14 +552,18 @@ class PBJProcessor:
                 eid_cache[cache_key] = cache_eid
 
             # Check Master List for Contract EID
-            elif (row["_norm_site_work"] != row["_norm_facility"] and 
-                row["_norm_facility"] != ""):
-                
+            elif (
+                row["_norm_site_work"] != row["_norm_facility"]
+                and row["_norm_facility"] != ""
+            ):
                 # Find site matches
-                site_matches = df_master[df_master["_norm_site_work"].apply(
+                site_matches = df_master[
+                    df_master["_norm_site_work"].apply(
                         lambda s: row["_norm_site_work"] in s
-                        or s in row["_norm_site_work"])]
-                
+                        or s in row["_norm_site_work"]
+                    )
+                ]
+
                 # Find name match
                 if not site_matches.empty:
                     result = process.extract(
@@ -538,13 +572,15 @@ class PBJProcessor:
                         scorer=fuzz.token_sort_ratio,
                     )
                     name_matches = [match for match in result if match[1] >= threshold]
-                    
+
                     # Single name match found :: swap EID
                     if len(name_matches) >= 1:
                         matched_eids = set()
                         for match in name_matches:
                             matched_name = match[0]
-                            matched_row = site_matches[site_matches["_norm_name"] == matched_name].iloc[0]
+                            matched_row = site_matches[
+                                site_matches["_norm_name"] == matched_name
+                            ].iloc[0]
                             matched_eid = str(matched_row[self.config.master_eid])
                             matched_eids.add(matched_eid)
 
@@ -567,17 +603,16 @@ class PBJProcessor:
                             "[Contract EID]  No Match  "
                             f"{row[self.config.rehab_full_name]}"
                         )
-                
+
                 # Site match not found :: clear EID
                 else:
                     print(
-                        "[Contract EID]  No Match  "
-                        f"{row[self.config.rehab_site_work]}"
+                        f"[Contract EID]  No Match  {row[self.config.rehab_site_work]}"
                     )
-                
+
                 # Save EID to cache
                 eid_cache[cache_key] = cache_eid
-        
+
             # Apply retrieved EID from Cache/PBJ/Master
             df_rehab.loc[idx, self.config.rehab_eid] = cache_eid
 
@@ -618,15 +653,17 @@ class PBJProcessor:
         pbj_file = paths.pbj_path
         pbj_filename = Path(paths.pbj_path).name
         processed_pbj = self.process_pbj(pbj_file)
-        
-        processed_pbj_path = Path(self.processed_dir) / pbj_filename.replace(".csv", ".xlsx")
+
+        processed_pbj_path = Path(self.processed_dir) / pbj_filename.replace(
+            ".csv", ".xlsx"
+        )
         processed_pbj.to_excel(processed_pbj_path, index=False)
-        
+
         # Process and merge TCLL File if found
         if paths.tcll_path:
             tcll_file = paths.tcll_path
             tcll_filename = Path(paths.tcll_path).name
-            
+
             processed_tcll = self.process_tcll(tcll_file)
             processed_tcll_path = Path(self.processed_dir) / tcll_filename
             processed_tcll.to_excel(processed_tcll_path, index=False)
@@ -700,8 +737,11 @@ class PBJProcessor:
             if col in date_columns or "date" in col.lower():
                 try:
                     # Convert column to date if column contains date-like data
-                    if (df[col].dtype == "object" or 
-                        pd.api.types.is_datetime64_any_dtype(df[col])):
+                    if df[
+                        col
+                    ].dtype == "object" or pd.api.types.is_datetime64_any_dtype(
+                        df[col]
+                    ):
                         df[col] = pd.to_datetime(df[col], errors="coerce").dt.date
                 except Exception as e:
                     print(f"Error: Could not parse date column {col}: {e}")
@@ -792,8 +832,9 @@ class PBJProcessor:
         site_codes = {
             "CCRC": "Community",
         }
-        if (group in site_work or
-            (group in site_codes.keys() and site_codes[group] in site_work)):
+        if group in site_work or (
+            group in site_codes.keys() and site_codes[group] in site_work
+        ):
             return True
         return False
 
