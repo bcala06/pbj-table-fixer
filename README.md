@@ -112,11 +112,14 @@ Steps:
 
    - If `"Site Worked"` and `"Primary Facility"` match:
 
-     - Find the EID from the standard PBJ whose `{Facility_Name}` corresponds to `Site Worked`.
+     - Find the EID from the standard PBJ (`{Quarter} {Facility_Name} Payroll Based Journal.csv`) that corresponds to `Site Worked`.
+     - If the standard PBJ is missing, ignore `EID` checking.
+     - If the `Name` is missing from the standard PBJ, clear current `EID`.
 
    - If `"Site Worked"` and `"Primary Facility"` do not match:
 
      - Use the EID from the `Contract Employee ID Master List`.
+     - If `Name` or `Site` is missing from the master list, clear current `EID`.
 
 2. **Split Output**
 

@@ -73,15 +73,19 @@ class PBJProcessor:
         processed_dir: str,
         merged_dir: str,
         rehab_dir: str,
+        utils_dir: str,
         config: Optional[ColumnConfig] = None,
     ):
         self.input_dir: str = input_dir
         self.processed_dir: str = processed_dir
         self.merged_dir: str = merged_dir
         self.rehab_dir: str = rehab_dir
+        self.utils_dir: str = utils_dir
         self.config = config or ColumnConfig()
 
         self.df_master: pd.Dataframe = self.load_master()
+        self.df_site_codes: pd.Dataframe | None = self.load_site_codes()
+        
         self.group_dict: defaultdict = defaultdict(dict)
         self.load_group_dict()
         self.rehab_dict: defaultdict = defaultdict(list)
@@ -114,6 +118,21 @@ class PBJProcessor:
         except Exception as e:
             print(f"Error loading master file: {e}")
             raise
+    
+    def load_site_codes(self) -> pd.DataFrame | None:
+        """Load the sitecodes.csv for name-code lookups."""
+        try:
+            site_codes_files = glob.glob(f"{self.utils_dir}/site_codes.csv")
+            if not site_codes_files:
+                raise FileNotFoundError("site_codes.csv not found")
+            file_path = site_codes_files[0]
+            df_site_codes = pd.read_csv(file_path)
+            print(f"Loaded facility directory with {len(df_site_codes)} records")
+            return df_site_codes
+        
+        except Exception as e:
+            print(f"Error loading facility directory: {e}")
+            return None
 
     def load_group_dict(self) -> None:
         """Read input directory and group PBJ files by Quarter and Facility."""
@@ -458,7 +477,7 @@ class PBJProcessor:
         ].apply(self._normalize_site)
 
         # Cache already searched-keys for faster lookups
-        eid_cache: dict[tuple(str, str, str), str] = {}
+        eid_cache: dict[tuple(str, str, str), tuple(str, bool)] = {}
         matches_found = 0
 
         # Try to load the corresponding standard PBJ from the same group
@@ -477,7 +496,8 @@ class PBJProcessor:
         # No corresponding PBJ :: keep unprocessed EID without checking.
         if df_group_pbj is None:
             print(
-                f"Warning: Standard PBJ File for {group_name} not found. Standard EID validation disabled."
+                f"Warning: Standard PBJ File for {group_name} not found. " 
+                "Standard EID validation disabled."
             )
 
         # Iterate through rows to validate/replace EIDs
@@ -488,11 +508,14 @@ class PBJProcessor:
                 row["_norm_facility"],
             )
             cache_eid = ""
+            cache_valid = False
 
             # Check cache for valid EID
             if cache_key in eid_cache.keys():
-                cache_eid = eid_cache[cache_key]
-                matches_found += 1
+                cache_eid = eid_cache[cache_key][0]
+                cache_valid = eid_cache[cache_key][1]
+                if cache_valid:
+                    matches_found += 1
 
             # Check PBJ for standard EID
             elif (
@@ -530,6 +553,7 @@ class PBJProcessor:
                         # Replace EID with match if unique, else clear
                         if len(matched_eids) == 1:
                             cache_eid = list(matched_eids)[0]
+                            cache_valid = True
                             matches_found += 1
                             print(
                                 f"[Standard EID]  {cache_eid}     "
@@ -547,9 +571,16 @@ class PBJProcessor:
                             "[Standard EID]  No Match  "
                             f"{row[self.config.rehab_full_name]}"
                         )
+                
+                else:
+                    cache_eid = row[self.config.rehab_eid]
+                    print(
+                        "[Standard EID]  Skipping  "
+                        f"{row[self.config.rehab_full_name]}"
+                    )
 
                 # Save EID to cache
-                eid_cache[cache_key] = cache_eid
+                eid_cache[cache_key] = (cache_eid, cache_valid)
 
             # Check Master List for Contract EID
             elif (
@@ -586,6 +617,7 @@ class PBJProcessor:
 
                         if len(matched_eids) == 1:
                             cache_eid = list(matched_eids)[0]
+                            cache_valid = True
                             matches_found += 1
                             print(
                                 f"[Contract EID]  {cache_eid}     "
@@ -611,7 +643,7 @@ class PBJProcessor:
                     )
 
                 # Save EID to cache
-                eid_cache[cache_key] = cache_eid
+                eid_cache[cache_key] = (cache_eid, cache_valid)
 
             # Apply retrieved EID from Cache/PBJ/Master
             df_rehab.loc[idx, self.config.rehab_eid] = cache_eid
@@ -826,16 +858,20 @@ class PBJProcessor:
 
         return site
 
-    @staticmethod
-    def _match_site_alias(group: str, site_work: str) -> bool:
+    def _match_site_alias(self, group: str, site_work: str) -> bool:
         """Check if a Group Name (File Name) is an alias or code for a Site Work (Facility Full Name)."""
-        site_codes = {
-            "CCRC": "Community",
-        }
-        if group in site_work or (
-            group in site_codes.keys() and site_codes[group] in site_work
-        ):
+        # Check for matches with the full/partial names for facilities
+        if group in site_work or site_work in group:
             return True
+        # Check for matches with the codenames for facilities
+        code_matches = self.df_site_codes[self.df_site_codes['Code'] == group]
+        if not code_matches.empty and code_matches.iloc[0]['SiteName'] in site_work:
+            return True
+        # Check for matches with the old names for facilities
+        oldname_matches = self.df_site_codes[self.df_site_codes['OldName'] == group]
+        if not oldname_matches.empty and oldname_matches.iloc[0]['SiteName'] in site_work:
+            return True
+        # No match found
         return False
 
 
@@ -847,6 +883,7 @@ def main():
             processed_dir="output/processed",
             merged_dir="output/merged",
             rehab_dir="output/rehab",
+            utils_dir="utils",
         )
 
         # For regular PBJ processing:
