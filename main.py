@@ -242,15 +242,15 @@ class PBJProcessor:
         # Make a copy to avoid SettingWithCopyWarning
         df = df.copy()
 
-        # Filter for Total Paid > 8.00
+        # Filter for Total Paid >= 8.00
         hour_threshold = 8.00
-        df = df[df[self.config.tcll_total_paid] > hour_threshold].copy()
+        df = df[df[self.config.tcll_total_paid] >= hour_threshold].copy()
 
-        # Filter out Clock In Time == 8:00 AND Clock Out Time == 16:30
+        # Filter out Clock In Time == '8:00' AND Clock Out Time == '16:30'
         df = df[
             ~(
-                (df[self.config.tcll_clock_in_time] == "8:00")
-                & (df[self.config.tcll_clock_out_time] == "16:30")
+                (df[self.config.tcll_clock_in_time] == "8:00 AM")
+                & (df[self.config.tcll_clock_out_time] == "4:30 PM")
             )
         ].copy()
 
@@ -279,6 +279,18 @@ class PBJProcessor:
         df.loc[:, self.config.tcll_remove] = deduction_per_interval * (
             df[self.config.tcll_total_paid] // deduction_interval
         )
+
+        # Exclude Rehab job descriptions
+        rehab_exclusions = [
+            "Occupational Therapist",
+            "Occupational Therapy Assistant",
+            "Occupational Therapy Aide",
+            "Physical Therapist",
+            "Physical Therapy Assistant",
+            "Physical Therapy Aide",
+            "Speech/Language Pathologist",
+        ]
+        df = df[~df[self.config.pbj_labor_distribution].isin(rehab_exclusions)].copy()
 
         return df
 
@@ -322,7 +334,6 @@ class PBJProcessor:
 
         # Exclude Rehab job descriptions
         rehab_exclusions = [
-            "Physician Assistant",
             "Occupational Therapist",
             "Occupational Therapy Assistant",
             "Occupational Therapy Aide",
@@ -795,7 +806,8 @@ class PBJProcessor:
         replacements = {
             "MDS - RN": "RN with Admin Duties",
             "MDS - LVN": "LVN with Admin Duties",
-        }
+        }  
+        # Replace if text in replacements, otherwise keep current text
         return replacements.get(text, text)
 
     @staticmethod
@@ -863,14 +875,17 @@ class PBJProcessor:
         # Check for matches with the full/partial names for facilities
         if group in site_work or site_work in group:
             return True
+        
         # Check for matches with the codenames for facilities
         code_matches = self.df_site_codes[self.df_site_codes['Code'] == group]
         if not code_matches.empty and code_matches.iloc[0]['SiteName'] in site_work:
             return True
+        
         # Check for matches with the old names for facilities
         oldname_matches = self.df_site_codes[self.df_site_codes['OldName'] == group]
         if not oldname_matches.empty and oldname_matches.iloc[0]['SiteName'] in site_work:
             return True
+        
         # No match found
         return False
 
