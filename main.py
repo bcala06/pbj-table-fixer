@@ -1,6 +1,5 @@
 import glob
 import msvcrt
-import os
 import re
 import warnings
 from dataclasses import dataclass
@@ -417,9 +416,7 @@ class PBJProcessor:
             print(f"Error merging TCLL and PBJ: {e}")
             raise
 
-    def process_rehab_pbj(
-        self, file_path: str, quarter: str, name_match_threshold: int = 90
-    ) -> List[pd.DataFrame]:
+    def process_rehab_pbj(self, file_path: str, quarter: str) -> List[pd.DataFrame]:
         """Process rehab PBJ using masterlist for EID lookup."""
         try:
             if not Path(file_path).exists():
@@ -448,9 +445,7 @@ class PBJProcessor:
                 self.config.rehab_site_work
             ):
                 print(f"\nProcessing group: {group_name}")
-                processed_group = self._match_rehab_eids(
-                    group_df, group_name, quarter, name_match_threshold
-                ).reset_index(drop=True)
+                processed_group = self._match_rehab_eids(group_df, group_name, quarter).reset_index(drop=True)
                 processed_groups.append(processed_group)
                 print("Completed processing for group.")
 
@@ -461,9 +456,7 @@ class PBJProcessor:
             print(f"Error processing Rehab PBJ: {e}")
             raise
 
-    def _match_rehab_eids(
-        self, df_rehab: pd.DataFrame, group_name: str, quarter: str, threshold: int
-    ) -> pd.DataFrame:
+    def _match_rehab_eids(self, df_rehab: pd.DataFrame, group_name: str, quarter: str) -> pd.DataFrame:
         """Match rehab employee names to master list EIDs."""
         # Create working copies with normalized columns
         df_rehab = df_rehab.copy()
@@ -471,7 +464,7 @@ class PBJProcessor:
 
         # Normalize names and sites
         df_rehab.loc[:, "_norm_name"] = df_rehab[self.config.rehab_full_name].apply(
-            self._normalize_name
+            self._normalize_name_alt    # Keep LastName,FirstName formatting
         )
         df_rehab.loc[:, "_norm_site_work"] = df_rehab[
             self.config.rehab_site_work
@@ -534,24 +527,22 @@ class PBJProcessor:
                 and row["_norm_facility"] != ""
             ):
                 if df_group_pbj is not None and not df_group_pbj.empty:
-                    # Create normalized names for PBJ employees
+                    # Create normalized names for PBJ employees (with format: LastName,FirstName)
                     df_group_pbj_temp = df_group_pbj.copy()
                     df_group_pbj_temp["_norm_full_name"] = (
-                        df_group_pbj_temp[self.config.pbj_first_name].astype(str)
-                        + " "
-                        + df_group_pbj_temp[self.config.pbj_last_name].astype(str)
+                        df_group_pbj_temp[self.config.pbj_last_name].astype(str)
+                        + ","
+                        + df_group_pbj_temp[self.config.pbj_first_name].astype(str)
                     ).apply(self._normalize_name)
 
-                    # Find name match in PBJ
-                    result = process.extract(
+                    # Query name match from matched PBJ
+                    name_matches = self._match_name_alias(
                         row["_norm_name"],
                         df_group_pbj_temp["_norm_full_name"].tolist(),
-                        scorer=fuzz.token_sort_ratio,
                     )
-                    name_matches = [match for match in result if match[1] >= threshold]
 
                     # Name match found :: get EID from PBJ
-                    if len(name_matches) >= 1:
+                    if len(name_matches) > 0:
                         matched_eids = set()
                         for match in name_matches:
                             matched_name = match[0]
@@ -561,7 +552,7 @@ class PBJProcessor:
                             matched_eid = matched_row[self.config.pbj_employee_number]
                             matched_eids.add(matched_eid)
 
-                        # Replace EID with match if unique, else clear
+                        # Unique EID found :: swap EID
                         if len(matched_eids) == 1:
                             cache_eid = list(matched_eids)[0]
                             cache_valid = True
@@ -570,19 +561,19 @@ class PBJProcessor:
                                 f"[Standard EID]  {cache_eid}     "
                                 f"{row[self.config.rehab_full_name]}"
                             )
+                        # Non-unique EID found :: clear EID
                         else:
                             print(
                                 "[Standard EID]  Conflict  "
                                 f"{row[self.config.rehab_full_name]}"
                             )
-
                     # Name match not found :: clear EID
                     else:
                         print(
                             "[Standard EID]  No Match  "
                             f"{row[self.config.rehab_full_name]}"
                         )
-                
+                # Site match not found :: keep current EID
                 else:
                     cache_eid = row[self.config.rehab_eid]
                     print(
@@ -608,15 +599,14 @@ class PBJProcessor:
 
                 # Find name match
                 if not site_matches.empty:
-                    result = process.extract(
-                        row["_norm_name"],
+                    # Query name match from Master List
+                    name_matches = self._match_name_alias(
+                        row["_norm_name"], 
                         site_matches["_norm_name"].tolist(),
-                        scorer=fuzz.token_sort_ratio,
                     )
-                    name_matches = [match for match in result if match[1] >= threshold]
 
-                    # Single name match found :: swap EID
-                    if len(name_matches) >= 1:
+                    # Name match found :: find unique EID
+                    if len(name_matches) > 0:
                         matched_eids = set()
                         for match in name_matches:
                             matched_name = match[0]
@@ -625,7 +615,8 @@ class PBJProcessor:
                             ].iloc[0]
                             matched_eid = str(matched_row[self.config.master_eid])
                             matched_eids.add(matched_eid)
-
+                        
+                        # Unique EID found :: swap EID
                         if len(matched_eids) == 1:
                             cache_eid = list(matched_eids)[0]
                             cache_valid = True
@@ -634,19 +625,18 @@ class PBJProcessor:
                                 f"[Contract EID]  {cache_eid}     "
                                 f"{row[self.config.rehab_full_name]}"
                             )
+                        # Non-unique EID found :: clear EID
                         else:
                             print(
                                 "[Contract EID]  Conflict  "
                                 f"{row[self.config.rehab_full_name]}"
                             )
-
                     # Name match not found :: clear EID
                     else:
                         print(
                             "[Contract EID]  No Match  "
                             f"{row[self.config.rehab_full_name]}"
                         )
-
                 # Site match not found :: clear EID
                 else:
                     print(
@@ -821,7 +811,7 @@ class PBJProcessor:
         name = re.sub(r'"[^"]*"', "", name)
         name = name.replace(".", "").strip().lower()
 
-        # Handle "Last, First" format
+        # Handle LastName,FirstName format if handle_comma is True
         if "," in name:
             parts = [part.strip() for part in name.split(",")]
             name = f"{parts[1]} {parts[0]}" if len(parts) > 1 else parts[0]
@@ -832,6 +822,28 @@ class PBJProcessor:
 
         # Remove common suffixes
         suffixes = {"jr", "sr", "ii", "iii", "iv", "v"}
+        tokens = [t for t in tokens if t not in suffixes]
+
+        return " ".join(tokens)
+
+    @staticmethod
+    def _normalize_name_alt(name: str) -> str:
+        """Normalize names for fuzzy matching. Do not handle LastName,FirstName format."""
+        if pd.isna(name):
+            return ""
+
+        name = str(name)
+        # Remove quoted text
+        name = re.sub(r'"[^"]*"', "", name)
+        name = name.replace(".", "").strip().lower()
+
+        # Split into tokens and filter
+        tokens = name.split()
+        tokens = [t for t in tokens if len(t) > 1]  # Remove single characters
+
+        # Remove common suffixes (with commas)
+        suffixes = {"jr", "sr", "ii", "iii", "iv", "v",
+                    "jr,", "sr,", "ii,", "iii,", "iv," "v,"}
         tokens = [t for t in tokens if t not in suffixes]
 
         return " ".join(tokens)
@@ -889,6 +901,47 @@ class PBJProcessor:
         # No match found
         return False
 
+    def _match_name_alias(self, name_query: str, name_choices: list[str], threshold: int = 90) -> list[str]:
+        """Find matching names with the query from a list of possible matches."""
+        alt_names: list[str] = []
+
+        # Handle LastName,FirstName format
+        if "," in name_query:
+            parts_full = [part.strip() for part in name_query.split(",")]
+            if len(parts_full) > 1:
+                last_name = parts_full[0]
+                first_name = parts_full[1]
+                name_query = f"{first_name} {last_name}"
+
+                # Look for alternate names (["FirstName LastName", "SecondName LastName"])
+                parts_first = [part.strip() for part in name_query.split()]
+                if len(parts_first) > 1:
+                    for part in parts_first:
+                        alt_name = f"{part.strip()} {last_name}"
+                        alt_names.append(alt_name)
+        
+        # Find matches with name in names
+        result = process.extract(
+            name_query,
+            name_choices,
+            scorer=fuzz.token_sort_ratio,
+        )
+        name_matches = [match for match in result if match[1] >= threshold]
+        if len(name_matches) > 0:
+            return name_matches
+        
+        # If no matches found, try using alt_names as name_query
+        total_alt_matches: list[tuple[str, float, int]] = []
+        for alt_name in alt_names:
+            alt_result = process.extract(
+                alt_name,
+                name_choices,
+                scorer=fuzz.token_sort_ratio,
+            )
+            alt_matches = [match for match in alt_result if match[1] >= threshold]
+            total_alt_matches.extend(alt_matches)
+        return total_alt_matches
+
 
 def main():
     """Main function to run the PBJ processing."""
@@ -908,12 +961,8 @@ def main():
         processor.process_rehab_pbj_files()
 
         print("\nAll processing completed successfully!")
-
-        if os.name == "nt":
-            print("Press any key to exit...")
-            msvcrt.getch()
-        else:
-            input("Press Enter to exit...")
+        print("Press any key to exit...")
+        msvcrt.getch()
 
     except Exception as e:
         print(f"\nProcessing failed: {e}")
